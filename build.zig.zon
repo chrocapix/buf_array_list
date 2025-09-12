@@ -1,0 +1,13 @@
+.{
+    .name = .buf_array_list,
+    .version = "0.0.1",
+    .dependencies = .{
+        .utilz = .{
+            .url = "https://github.com/chrocapix/utilz/archive/refs/tags/0.15.1-0.7.tar.gz",
+            .hash = "utilz-0.0.1-nD7huk2rAAAC5cyrjdm-a2-BNvp4ZrLGqGyvSnJZgVl5",
+        },
+    },
+    .minimum_zig_version = "0.15.1",
+    .paths = .{""},
+    .fingerprint = 0xe7dc6b68ad5d3b99,
+}
