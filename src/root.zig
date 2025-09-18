@@ -27,7 +27,7 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
 
         const usizem1 = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 
-        pub const max_capacity = std.math.maxInt(usizem1);
+        pub const max_capacity: usize = std.math.maxInt(usizem1);
 
         fn capacity(this: @This()) usize {
             return this.cap_alloc.capacity;
@@ -47,15 +47,25 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
             this.* = undefined;
         }
 
+        pub fn clearAndFree(this: *@This(), al: Allocator) void {
+            if (this.cap_alloc.allocated != 0)
+                al.free(this.allocatedSlice());
+            this.items.len = 0;
+            this.cap_alloc = .{ .allocated = 0, .capacity = 0 };
+        }
+
         pub fn append(this: *@This(), al: Allocator, item: T) !void {
+            // asm volatile ("; buf.append");
             (try this.addOne(al)).* = item;
         }
 
         pub fn appendAssumeCapacity(this: *@This(), item: T) void {
+            // asm volatile ("; buf.appendAssumeCapacity");
             this.addOneAssumeCapacity().* = item;
         }
 
         pub fn addOneAssumeCapacity(this: *@This()) *T {
+            // asm volatile ("; buf.addOneAssumeCapacity");
             std.debug.assert(this.items.len < this.capacity());
 
             this.items.len += 1;
@@ -63,6 +73,7 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
         }
 
         pub fn addOne(this: *@This(), al: Allocator) !*T {
+            // asm volatile ("; buf.addOne");
             try this.ensureTotalCapacity(al, this.items.len + 1);
             return this.addOneAssumeCapacity();
         }
@@ -72,10 +83,13 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
             al: Allocator,
             new_cap: usize,
         ) Allocator.Error!void {
+            // asm volatile ("; buf.ensureTotalCapacity");
             std.debug.assert(new_cap <= max_capacity);
 
-            if (this.capacity() >= new_cap)
+            if (this.capacity() >= new_cap) {
+                @branchHint(.likely);
                 return;
+            }
 
             return this.ensureTotalCapacityPrecise(
                 al,
@@ -88,21 +102,28 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
             al: Allocator,
             new_cap: usize,
         ) Allocator.Error!void {
+            // asm volatile ("; buf.ensureTotalCapacityPrecise");
             std.debug.assert(new_cap <= max_capacity);
-            if (this.capacity() >= new_cap) return;
-
-            const new_cap1: usizem1 = @intCast(new_cap);
-
-            if (this.cap_alloc.allocated == 0) {
-                const new_mem = try al.alignedAlloc(T, alignment, new_cap);
-                @memcpy(new_mem[0..this.items.len], this.items);
-                this.items.ptr = new_mem.ptr;
-                this.cap_alloc.capacity = new_cap1;
-                this.cap_alloc.allocated = 1;
+            if (this.capacity() >= new_cap) {
+                @branchHint(.likely);
                 return;
             }
 
-            const old_mem = this.allocatedSlice(); //)this.items.ptr[0..this.cap_alloc.capacity];
+            const new_cap1: usizem1 = @intCast(new_cap);
+
+            // if (this.cap_alloc.allocated == 0) {
+            //     const new_mem = try al.alignedAlloc(T, alignment, new_cap);
+            //     @memcpy(new_mem[0..this.items.len], this.items);
+            //     this.items.ptr = new_mem.ptr;
+            //     this.cap_alloc.capacity = new_cap1;
+            //     this.cap_alloc.allocated = 1;
+            //     return;
+            // }
+
+            // const old_mem = this.allocatedSlice();
+            var old_mem = this.allocatedSlice(); 
+            if (this.cap_alloc.allocated == 0) old_mem.len = 0;
+            //)this.items.ptr[0..this.cap_alloc.capacity];
             // const old_mem = this.allocatedMemory();
             if (al.remap(old_mem, new_cap)) |new_mem| {
                 this.items.ptr = new_mem.ptr;
@@ -119,6 +140,7 @@ pub fn Aligned(T: type, alignment: ?mem.Alignment) type {
         }
 
         fn growCapacity(current: usizem1, minimum: usizem1) usize {
+            // asm volatile ("; buf.growCapacity");
             var new = current;
             while (true) {
                 new +|= new / 2 + init_capacity;

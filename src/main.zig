@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const buf_array_list = @import("buf_array_list");
-const juice = @import("utilz.juice");
+const juice = @import("juice.zig");
 const Timer = @import("utilz.timer");
 
 pub fn sha256(msg: []const u8) [256 / 8]u8 {
@@ -47,6 +47,20 @@ fn makeSizes(al: Allocator, lo: usize, hi: usize, m: usize) ![]usize {
     return s;
 }
 
+fn median(tmp: []f64, x: []const f64) f64 {
+    @memcpy(tmp, x);
+    // std.debug.print("before sort: {any}\n", .{tmp});
+    std.sort.pdq(f64, tmp, {}, std.sort.asc(f64));
+    // std.debug.print("       sort: {any}\n", .{tmp});
+    return tmp[tmp.len / 2];
+}
+
+// noinline to try to isolate the code being measured
+// noinline 
+fn tab_append(al: Allocator, tab: anytype, item: usize) !void {
+    return tab.append(al, @truncate(item));
+}
+
 fn bench(
     out: *std.Io.Writer,
     al: std.mem.Allocator,
@@ -55,24 +69,40 @@ fn bench(
 ) !void {
     // try tab.ensureTotalCapacityPrecise(al, count);
 
-    var tim: Timer = try .start();
-    const times = try al.alloc(f64, sizes.len);
-    defer al.free(times);
+    std.debug.print("bench\n", .{});
+    const nrun = 11;
 
-    var n: usize = 0;
-    for (sizes, 0..) |size, is| {
-        for (n..size) |i|
-            try tab.append(al, @truncate(i));
-        n = size;
-        times[is] = tim.read().ns;
+    const times = try al.alloc([]f64, sizes.len);
+    defer al.free(times);
+    for (times) |*t|
+        t.* = al.alloc(f64, nrun) catch @panic("oom");
+    defer for (times) |t| al.free(t);
+
+    for (0..nrun) |run| {
+        std.debug.print("run {}\n", .{run});
+        tab.clearAndFree(al);
+        var tim: Timer = try .start();
+        var n: usize = 0;
+        for (sizes, 0..) |size, is| {
+            for (n..size) |i|
+                try tab_append(al, tab, i);
+            // try tab.append(al, @truncate(i));
+            std.mem.doNotOptimizeAway(tab.items);
+            n = size;
+            times[is][run] = tim.read().ns;
+        }
     }
+
+    const tmp = try al.alloc(f64, nrun);
+    defer al.free(tmp);
 
     var prev: usize = 0;
     for (sizes, times) |size, time| {
         if (size > prev)
-            try out.print("{} {}\n", .{ size, time });
+            try out.print("{} {}\n", .{ size, median(tmp, time) });
         prev = size;
     }
+    try out.flush();
 }
 
 fn benchType(out: *std.Io.Writer, al: Allocator, argv: anytype, Item: type, sizes: Sizes) !void {
@@ -153,12 +183,21 @@ const Sizes = struct {
     }
 };
 
+fn warmup(s: f64) !void {
+    const ns = s * 1e-9;
+    var tim: Timer = try .start();
+    while (tim.read().ns < ns) {}
+}
+
 pub fn juicyMain(i: juice.Init(usage)) !void {
     // const al = std.heap.page_allocator;
     const al = i.gpa;
 
     // const sizes = try makeSizes(al, i.argv.lo.?, i.argv.hi.?, i.argv.n.?);
     // defer al.free(sizes);
+
+    // warmup 100ms
+    try warmup(200e-3);
 
     if (i.argv.small > 0) {
         try benchSmall(al, i.argv, u32);
@@ -170,9 +209,9 @@ pub fn juicyMain(i: juice.Init(usage)) !void {
     const u = i.argv.u orelse 8;
 
     if (u == 8) try benchType(i.out, al, i.argv, u8, sizes);
-    if (u == 16) try benchType(i.out, al, i.argv, u16, sizes);
-    if (u == 32) try benchType(i.out, al, i.argv, u32, sizes);
-    if (u == 64) try benchType(i.out, al, i.argv, u64, sizes);
+    // if (u == 16) try benchType(i.out, al, i.argv, u16, sizes);
+    // if (u == 32) try benchType(i.out, al, i.argv, u32, sizes);
+    // if (u == 64) try benchType(i.out, al, i.argv, u64, sizes);
 
     // if (i.argv.std > 0) {
     //     var tab : std.ArrayList(u8) = .empty;
