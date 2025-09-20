@@ -55,10 +55,26 @@ fn median(tmp: []f64, x: []const f64) f64 {
     return tmp[tmp.len / 2];
 }
 
+// fn tab_append(al: Allocator, tab: anytype, item: usize) !void {
+//     return tab.append(al, @truncate(item));
+// }
+
 // noinline to try to isolate the code being measured
-// noinline 
-fn tab_append(al: Allocator, tab: anytype, item: usize) !void {
-    return tab.append(al, @truncate(item));
+// noinline
+noinline fn doRun(
+    al: Allocator,
+    tab: anytype,
+    sum: usize,
+    from: usize,
+    to: usize,
+) !usize {
+    asm volatile ("# dorun " ++ @typeName(@TypeOf(tab)));
+    var s = sum;
+    for (from..to) |i|
+        try tab.append(al, @truncate(i));
+    for (from..to) |i|
+        s +%= tab.items[i];
+    return s;
 }
 
 fn bench(
@@ -69,8 +85,8 @@ fn bench(
 ) !void {
     // try tab.ensureTotalCapacityPrecise(al, count);
 
-    std.debug.print("bench\n", .{});
-    const nrun = 11;
+    std.debug.print("bench", .{});
+    const nrun = 31;
 
     const times = try al.alloc([]f64, sizes.len);
     defer al.free(times);
@@ -79,19 +95,25 @@ fn bench(
     defer for (times) |t| al.free(t);
 
     for (0..nrun) |run| {
-        std.debug.print("run {}\n", .{run});
+        std.debug.print(" {}", .{run});
         tab.clearAndFree(al);
+        var sum: usize = 0;
         var tim: Timer = try .start();
         var n: usize = 0;
         for (sizes, 0..) |size, is| {
-            for (n..size) |i|
-                try tab_append(al, tab, i);
-            // try tab.append(al, @truncate(i));
-            std.mem.doNotOptimizeAway(tab.items);
+            // for (n..size) |i|
+            //     try tab_append(al, tab, i);
+            //
+            // for (n..size) |i|
+            //     sum +%= tab.items[i];
+
+            sum = try doRun(al, tab, sum, n, size);
+            std.mem.doNotOptimizeAway(sum);
             n = size;
             times[is][run] = tim.read().ns;
         }
     }
+    std.debug.print("\n", .{});
 
     const tmp = try al.alloc(f64, nrun);
     defer al.free(tmp);
@@ -122,19 +144,20 @@ fn benchType(out: *std.Io.Writer, al: Allocator, argv: anytype, Item: type, size
 }
 
 fn benchSmall(al: Allocator, argv: anytype, Item: type) !void {
-    var size: usize = 12;
+    var size: usize = 60;
     size = size;
 
     if (argv.std > 0) {
         for (0..argv.n.?) |_| {
             var tab: std.ArrayList(Item) = try .initCapacity(al, 64);
             defer tab.deinit(al);
-            asm volatile ("");
 
             for (0..size) |i|
                 try tab.append(al, @intCast(i));
 
-            std.mem.doNotOptimizeAway(tab.items);
+            var sum: Item = 0;
+            for (tab.items) |i| sum +%= i;
+            std.mem.doNotOptimizeAway(sum);
         }
     }
 
@@ -143,12 +166,15 @@ fn benchSmall(al: Allocator, argv: anytype, Item: type) !void {
             var buffer: [64]Item = undefined;
             var tab: BufArrayList(Item) = .initBuffer(&buffer);
             defer tab.deinit(al);
-            asm volatile ("");
 
             for (0..size) |i|
                 try tab.append(al, @intCast(i));
 
             std.mem.doNotOptimizeAway(tab.items);
+
+            var sum: Item = 0;
+            for (tab.items) |i| sum +%= i;
+            std.mem.doNotOptimizeAway(sum);
         }
     }
 }
@@ -209,9 +235,9 @@ pub fn juicyMain(i: juice.Init(usage)) !void {
     const u = i.argv.u orelse 8;
 
     if (u == 8) try benchType(i.out, al, i.argv, u8, sizes);
-    // if (u == 16) try benchType(i.out, al, i.argv, u16, sizes);
-    // if (u == 32) try benchType(i.out, al, i.argv, u32, sizes);
-    // if (u == 64) try benchType(i.out, al, i.argv, u64, sizes);
+    if (u == 16) try benchType(i.out, al, i.argv, u16, sizes);
+    if (u == 32) try benchType(i.out, al, i.argv, u32, sizes);
+    if (u == 64) try benchType(i.out, al, i.argv, u64, sizes);
 
     // if (i.argv.std > 0) {
     //     var tab : std.ArrayList(u8) = .empty;
